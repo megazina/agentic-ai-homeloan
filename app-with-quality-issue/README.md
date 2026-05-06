@@ -54,7 +54,7 @@ The manifest deploys the Home Loan Broker app into the `home-loan-agent` namespa
 Apply the manifest:
 
 ```bash
-kubectl apply -f /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue/k8s.yaml
+kubectl apply -f /agentic-ai-homeloan/app-with-quality-issue/k8s.yaml
 ```
 
 ### Test The Application In Kubernetes
