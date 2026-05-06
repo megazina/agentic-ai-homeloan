@@ -31,6 +31,13 @@ curl http://localhost:8080/home-loan/assess \
 
 ### Build An Updated Docker Image
 
+Create namespace
+
+```bash
+kubectl create ns home-loan-agent
+```
+
+
 Build an updated Docker image with the quality-issue tag:
 
 ```bash
@@ -57,6 +64,8 @@ Apply the manifest:
 kubectl apply -f k8s.yaml
 ```
 
+
+
 If this is the first deployment into `home-loan-agent`, create the Azure OpenAI secret in that namespace. Kubernetes secrets are namespace-scoped, so a pod in `home-loan-agent` cannot directly read the existing `azure-openai-api` secret from `travel-agent`.
 
 Use the same environment variables from the workshop setup:
@@ -81,13 +90,17 @@ kubectl create secret generic azure-openai-api \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Also copy the Splunk resource config from the original namespace, if it exists there:
+Create a configmap:
 
 ```bash
 kubectl create configmap instance-config \
   -n home-loan-agent \
-  --from-literal=OTEL_RESOURCE_ATTRIBUTES="$(kubectl get configmap instance-config -n travel-agent -o jsonpath='{.data.OTEL_RESOURCE_ATTRIBUTES}')" \
+  --from-literal=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=agentic-ai-$INSTANCE \
   --dry-run=client -o yaml | kubectl apply -f -
+```
+
+```bash
+kubectl apply -f k8s.yaml
 ```
 
 The manifest marks these references as optional so the pod can still start for deterministic/offline testing. For the full LLM and Splunk workshop path, the secret and configmap should be present in `home-loan-agent`.
@@ -123,6 +136,23 @@ Send a test assessment request through the primary Home Loan Broker ingress host
 curl http://home-loan-broker.localhost/home-loan/assess \
   -H "Content-Type: application/json" \
   -d @sample_payloads/likely_eligible.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d sample_payloads/high_dti_serviceability_fail.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d sample_payloads/high_lvr.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d sample_payloads/aml_escalation.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d sample_payloads/policy_drift.json
+
 ```
 
 The old workshop host and route are still available as a deprecated compatibility alias:
@@ -160,6 +190,8 @@ Defaults:
 ## Observability And Safety
 
 The app preserves the workshop OpenTelemetry/Splunk instrumentation settings, including GenAI content capture in `k8s.yaml`. LLM calls receive redacted/summarized inputs where practical, and the final JSON excludes raw prompts, full model outputs, and applicant identifiers.
+
+Every A0-A6 LangGraph node creates an explicit OpenTelemetry span with `ai.workflow.name`, `ai.agent.name`, `ai.agent.version`, and Home Loan attributes. The LLM-backed nodes also create LangChain/GenAI spans, so in Splunk you may see both the high-level agent span and nested model/tool spans.
 
 This is not a real lending decision engine. Outcomes are deterministic demo recommendations only: `APPROVE_IN_PRINCIPLE`, `REFER`, `DECLINE`, or `NEED_MORE_INFO`.
 

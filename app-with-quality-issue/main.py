@@ -24,8 +24,9 @@ import logging
 import os
 import re
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Callable, Dict, List, Optional, TypedDict
 from uuid import uuid4
 
 from flask import Flask, jsonify, request
@@ -239,6 +240,55 @@ def _set_span_attributes(attributes: Dict[str, Any]) -> None:
     for key, value in attributes.items():
         if value is not None:
             span.set_attribute(key, value)
+
+
+def _selection_reason_for_agent(state: HomeLoanState, agent_name: str) -> str:
+    label = AGENT_LABELS.get(agent_name, agent_name)
+    return state.get("agent_selection_reasons", {}).get(
+        label,
+        "Execute bounded Home Loan Broker workflow step.",
+    )
+
+
+def _agent_span_context(state: HomeLoanState, agent_name: str):
+    if trace is None:
+        return nullcontext()
+
+    tracer = trace.get_tracer(__name__)
+    span_name = f"{WORKFLOW_NAME}.{AGENT_LABELS.get(agent_name, agent_name)}"
+    return tracer.start_as_current_span(
+        span_name,
+        attributes={
+            "ai.workflow.name": WORKFLOW_NAME,
+            "ai.agent.name": agent_name,
+            "ai.agent.label": AGENT_LABELS.get(agent_name, agent_name),
+            "ai.agent.version": AGENT_VERSION,
+            "ai.agent.selected": True,
+            "ai.agent.selection_reason": _selection_reason_for_agent(state, agent_name),
+            "home_loan.intent": state.get("intent"),
+            "session_id": state.get("session_id"),
+        },
+    )
+
+
+def _run_agent_node_with_span(
+    agent_name: str,
+    node_func: Callable[[HomeLoanState], HomeLoanState],
+    state: HomeLoanState,
+) -> HomeLoanState:
+    """Create one visible OTel span for every LangGraph agent node."""
+    with _agent_span_context(state, agent_name) as span:
+        try:
+            next_state = node_func(state)
+            if span is not None and hasattr(span, "set_attribute"):
+                span.set_attribute("ai.agent.status", "completed")
+                span.set_attribute("home_loan.next_agent", next_state.get("current_agent"))
+            return next_state
+        except Exception as exc:
+            if span is not None and hasattr(span, "record_exception"):
+                span.record_exception(exc)
+                span.set_attribute("ai.agent.status", "error")
+            raise
 
 
 def _record_agent_start(
@@ -854,13 +904,44 @@ def should_continue(state: HomeLoanState) -> str:
 
 def build_workflow() -> StateGraph:
     graph = StateGraph(HomeLoanState)
-    graph.add_node("broker_orchestrator", lambda state: broker_orchestrator_node(state))
-    graph.add_node("conversation_intake", lambda state: conversation_intake_node(state))
-    graph.add_node("kyc_aml", lambda state: kyc_aml_node(state))
-    graph.add_node("eligibility", lambda state: eligibility_node(state))
-    graph.add_node("policy", lambda state: policy_node(state))
-    graph.add_node("risk_compliance", lambda state: risk_compliance_node(state))
-    graph.add_node("decision_audit", lambda state: decision_audit_node(state))
+    graph.add_node(
+        "broker_orchestrator",
+        lambda state: _run_agent_node_with_span(
+            "broker_orchestrator", broker_orchestrator_node, state
+        ),
+    )
+    graph.add_node(
+        "conversation_intake",
+        lambda state: _run_agent_node_with_span(
+            "conversation_intake", conversation_intake_node, state
+        ),
+    )
+    graph.add_node(
+        "kyc_aml",
+        lambda state: _run_agent_node_with_span("kyc_aml", kyc_aml_node, state),
+    )
+    graph.add_node(
+        "eligibility",
+        lambda state: _run_agent_node_with_span(
+            "eligibility", eligibility_node, state
+        ),
+    )
+    graph.add_node(
+        "policy",
+        lambda state: _run_agent_node_with_span("policy", policy_node, state),
+    )
+    graph.add_node(
+        "risk_compliance",
+        lambda state: _run_agent_node_with_span(
+            "risk_compliance", risk_compliance_node, state
+        ),
+    )
+    graph.add_node(
+        "decision_audit",
+        lambda state: _run_agent_node_with_span(
+            "decision_audit", decision_audit_node, state
+        ),
+    )
     graph.add_conditional_edges(START, should_continue)
     graph.add_conditional_edges("broker_orchestrator", should_continue)
     graph.add_conditional_edges("conversation_intake", should_continue)
