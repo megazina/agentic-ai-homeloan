@@ -1,0 +1,12 @@
+{
+  "user_request": "Assess a home loan for a permanent employee buying an owner-occupied property. Applicant is a citizen with stable income and no unusual AML indicators.",
+  "gross_annual_income": 180000,
+  "monthly_expenses": 4500,
+  "deposit": 250000,
+  "property_value": 1000000,
+  "loan_amount": 750000,
+  "employment_type": "permanent",
+  "dependants": 1,
+  "existing_debts": 20000,
+  "residency_status": "citizen"
+}

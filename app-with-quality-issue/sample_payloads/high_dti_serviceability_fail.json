@@ -1,0 +1,12 @@
+{
+  "user_request": "Assess a home loan where the borrower has high debt-to-income and tight monthly surplus.",
+  "gross_annual_income": 120000,
+  "monthly_expenses": 6200,
+  "deposit": 200000,
+  "property_value": 950000,
+  "loan_amount": 750000,
+  "employment_type": "permanent",
+  "dependants": 3,
+  "existing_debts": 80000,
+  "residency_status": "citizen"
+}

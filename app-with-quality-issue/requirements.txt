@@ -1,0 +1,13 @@
+# Home Loan Broker Agentic AI demo dependencies.
+# Keep this aligned with the original Flask + LangGraph + LangChain workshop app.
+langchain>=1.0.0
+langchain-openai>=1.0.0
+langgraph>=1.0.0
+python-dotenv>=1.0.0
+flask>=3.0.0
+requests>=2.31.0
+splunk-opentelemetry==2.8.0
+splunk-otel-instrumentation-langchain==0.1.7
+splunk-otel-genai-emitters-splunk==0.1.7
+splunk-otel-util-genai==0.1.9
+opentelemetry-instrumentation-flask==0.59b0

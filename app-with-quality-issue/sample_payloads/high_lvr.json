@@ -1,0 +1,12 @@
+{
+  "user_request": "Assess a high LVR home loan scenario for a permanent employee.",
+  "gross_annual_income": 220000,
+  "monthly_expenses": 4200,
+  "deposit": 50000,
+  "property_value": 1000000,
+  "loan_amount": 930000,
+  "employment_type": "permanent",
+  "dependants": 0,
+  "existing_debts": 0,
+  "residency_status": "citizen"
+}
