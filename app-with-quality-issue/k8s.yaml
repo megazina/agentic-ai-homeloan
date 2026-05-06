@@ -35,6 +35,7 @@ spec:
                 secretKeyRef:
                   name: azure-openai-api
                   key: azure-openai-api-endpoint
+                  optional: true
             - name: AZURE_OPENAI_API_VERSION
               value: "2024-12-01-preview"
             - name: AZURE_OPENAI_API_KEY
@@ -42,6 +43,7 @@ spec:
                 secretKeyRef:
                   name: azure-openai-api
                   key: azure-openai-api-key
+                  optional: true
             # OpenAI Model
             - name: OPENAI_MODEL
               value: "gpt-4.1-mini"
@@ -55,6 +57,7 @@ spec:
                 configMapKeyRef:
                   name: instance-config
                   key: OTEL_RESOURCE_ATTRIBUTES
+                  optional: true
             - name: SPLUNK_OTEL_AGENT
               valueFrom:
                 fieldRef:

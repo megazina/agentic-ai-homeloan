@@ -34,7 +34,7 @@ curl http://localhost:8080/home-loan/assess \
 Build an updated Docker image with the quality-issue tag:
 
 ```bash
-cd /agentic-ai-homeloan/app-with-quality-issue
+cd /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue
 docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
 docker push localhost:9999/agentic-ai-app:app-with-quality-issue
 ```
@@ -54,8 +54,43 @@ The manifest deploys the Home Loan Broker app into the `home-loan-agent` namespa
 Apply the manifest:
 
 ```bash
-kubectl apply -f /agentic-ai-homeloan/app-with-quality-issue/k8s.yaml
+kubectl apply -f k8s.yaml
 ```
+
+If this is the first deployment into `home-loan-agent`, create the Azure OpenAI secret in that namespace. Kubernetes secrets are namespace-scoped, so a pod in `home-loan-agent` cannot directly read the existing `azure-openai-api` secret from `travel-agent`.
+
+Use the same environment variables from the workshop setup:
+
+```bash
+{ [ -z "$AZURE_OPENAI_ENDPOINT" ] || [ -z "$AZURE_OPENAI_API_KEY" ]; } && \
+  echo "Error: Missing variables" || \
+  kubectl create secret generic azure-openai-api \
+    -n home-loan-agent \
+    --from-literal=azure-openai-api-endpoint="$AZURE_OPENAI_ENDPOINT" \
+    --from-literal=azure-openai-api-key="$AZURE_OPENAI_API_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Alternatively, copy the existing secret from the original `travel-agent` namespace:
+
+```bash
+kubectl create secret generic azure-openai-api \
+  -n home-loan-agent \
+  --from-literal=azure-openai-api-endpoint="$(kubectl get secret azure-openai-api -n travel-agent -o jsonpath='{.data.azure-openai-api-endpoint}' | base64 -d)" \
+  --from-literal=azure-openai-api-key="$(kubectl get secret azure-openai-api -n travel-agent -o jsonpath='{.data.azure-openai-api-key}' | base64 -d)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Also copy the Splunk resource config from the original namespace, if it exists there:
+
+```bash
+kubectl create configmap instance-config \
+  -n home-loan-agent \
+  --from-literal=OTEL_RESOURCE_ATTRIBUTES="$(kubectl get configmap instance-config -n travel-agent -o jsonpath='{.data.OTEL_RESOURCE_ATTRIBUTES}')" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+The manifest marks these references as optional so the pod can still start for deterministic/offline testing. For the full LLM and Splunk workshop path, the secret and configmap should be present in `home-loan-agent`.
 
 ### Test The Application In Kubernetes
 
@@ -63,6 +98,23 @@ Ensure the new application pod has started successfully:
 
 ```bash
 kubectl get pods -n home-loan-agent
+```
+
+If the pod shows `CreateContainerConfigError`, inspect the event message:
+
+```bash
+kubectl describe pod <pod-name> -n home-loan-agent
+```
+
+The most common cause is a missing namespace-scoped resource such as `secret "azure-openai-api"` or `configmap "instance-config"`. Copy those resources into `home-loan-agent`, then restart the deployment:
+
+```bash
+kubectl rollout restart deployment/home-loan-broker-langchain -n home-loan-agent
+kubectl rollout status deployment/home-loan-broker-langchain -n home-loan-agent
+```
+
+```bash
+kubectl logs home-loan-broker-langchain-679b6b7668-jc9xw -n home-loan-agent
 ```
 
 Send a test assessment request through the primary Home Loan Broker ingress host:
