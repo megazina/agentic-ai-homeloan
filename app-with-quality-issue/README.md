@@ -299,7 +299,7 @@ kubectl get pods -n splunk-otel
 ### Build The Image
 
 ```bash
-cd /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue
+cd /agentic-ai-homeloan/app-with-quality-issue
 docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
 docker push localhost:9999/agentic-ai-app:app-with-quality-issue
 ```
