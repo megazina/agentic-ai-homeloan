@@ -154,15 +154,6 @@ class HomeLoanApiTests(unittest.TestCase):
         self.assertNotIn(LIKELY_ELIGIBLE["user_request"], serialized)
         self.assertFalse(body["audit_record"]["redaction"]["raw_prompt_exported"])
 
-    def test_deprecated_travel_plan_alias(self):
-        response = self.client.post("/travel/plan", json=LIKELY_ELIGIBLE)
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["X-Deprecated-Route"], "/home-loan/assess")
-        body = response.get_json()
-        self.assertEqual(body["final_outcome"], "APPROVE_IN_PRINCIPLE")
-        self.assertIn("deprecation", body)
-
     def test_sample_payloads_execute_expected_paths(self):
         sample_dir = Path(__file__).resolve().parents[1] / "sample_payloads"
         expected_outcomes = {

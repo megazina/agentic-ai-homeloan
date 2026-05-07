@@ -142,14 +142,3 @@ spec:
                 name: home-loan-broker-langchain-service
                 port:
                   number: 8080
-    # Deprecated workshop alias retained for scripts that still call /travel/plan.
-    - host: travel-planner.localhost
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: home-loan-broker-langchain-service
-                port:
-                  number: 8080

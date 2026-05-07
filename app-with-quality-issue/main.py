@@ -1,8 +1,8 @@
 """
 Multi-agent Home Loan Broker demo driven by LangGraph.
 
-This re-themes the original Travel Agent workshop app into a mortgage broker
-orchestration flow while preserving the same core execution pattern:
+This app runs a bounded mortgage broker orchestration flow using Flask,
+LangGraph, LangChain agents, deterministic Home Loan tools, and OpenTelemetry:
 
 Flask route -> internal workflow function -> initial shared state -> build graph
 -> compile graph -> stream node execution -> final JSON response.
@@ -31,7 +31,14 @@ from uuid import uuid4
 
 from flask import Flask, jsonify, request
 from langchain.agents import create_agent as _create_react_agent  # type: ignore[attr-defined]
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.tools import tool
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import AnyMessage, add_messages
@@ -415,6 +422,74 @@ def _invoke_llm_agent(
     return message
 
 
+def _parse_tool_json(messages: List[BaseMessage]) -> Optional[Dict[str, Any]]:
+    """Return the most recent JSON object emitted by a LangChain tool call."""
+    for message in reversed(messages):
+        if not isinstance(message, ToolMessage):
+            continue
+        try:
+            parsed = json.loads(str(message.content))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _invoke_tool_agent(
+    state: HomeLoanState,
+    agent_name: str,
+    system_content: str,
+    user_content: str,
+    *,
+    temperature: float,
+    selection_reason: str,
+    tools: List[Any],
+    deterministic_result: Callable[[], Dict[str, Any]],
+) -> tuple[AIMessage, Dict[str, Any]]:
+    """Invoke a LangChain agent that must call a deterministic Home Loan tool."""
+    if not _llm_configured():
+        result = deterministic_result()
+        fallback = AIMessage(
+            content=(
+                f"{AGENT_LABELS[agent_name]} completed deterministic tool logic. "
+                "LLM invocation skipped because Azure OpenAI is not configured."
+            )
+        )
+        _record_usage(state, agent_name, user_content, fallback.content)
+        return fallback, result
+
+    llm = _create_llm(agent_name, temperature=temperature, session_id=state["session_id"])
+    agent = _create_react_agent(llm, tools=tools).with_config(
+        _agent_config(agent_name, state, selection_reason)
+    )
+    result = agent.invoke(
+        {
+            "messages": [
+                SystemMessage(content=system_content),
+                HumanMessage(content=user_content),
+            ]
+        }
+    )
+    messages = result["messages"]
+    tool_result = _parse_tool_json(messages)
+    if tool_result is None:
+        tool_result = deterministic_result()
+
+    final_message = messages[-1]
+    message = (
+        final_message
+        if isinstance(final_message, AIMessage)
+        else AIMessage(
+            content=final_message.content
+            if isinstance(final_message, BaseMessage)
+            else str(final_message)
+        )
+    )
+    _record_usage(state, agent_name, user_content, message.content)
+    return message, tool_result
+
+
 def _extract_number_from_request(user_request: str, labels: List[str]) -> Optional[float]:
     for label in labels:
         pattern = rf"{label}\D{{0,40}}(?:\$|aud\s*)?(\d[\d,]*(?:\.\d+)?)"
@@ -661,6 +736,34 @@ def evaluate_risk_compliance(
     }
 
 
+@tool
+def run_kyc_aml_check(application_data_json: str) -> str:
+    """Run the deterministic Home Loan KYC/AML check and return JSON."""
+    application_data = json.loads(application_data_json)
+    return json.dumps(evaluate_kyc_aml(application_data), sort_keys=True)
+
+
+@tool
+def calculate_home_loan_eligibility(application_data_json: str) -> str:
+    """Run deterministic Home Loan eligibility checks and return JSON."""
+    application_data = json.loads(application_data_json)
+    return json.dumps(calculate_eligibility(application_data), sort_keys=True)
+
+
+@tool
+def run_risk_compliance_review(review_context_json: str) -> str:
+    """Run deterministic Home Loan risk/compliance review and return JSON."""
+    review_context = json.loads(review_context_json)
+    return json.dumps(
+        evaluate_risk_compliance(
+            review_context["kyc_aml_result"],
+            review_context["eligibility_result"],
+            review_context["policy_result"],
+        ),
+        sort_keys=True,
+    )
+
+
 def determine_final_outcome(
     eligibility_result: Dict[str, Any],
     risk_compliance_result: Dict[str, Any],
@@ -748,11 +851,24 @@ def kyc_aml_node(state: HomeLoanState) -> HomeLoanState:
     selection_reason = state["agent_selection_reasons"]["A2_KYC_AML"]
     _record_agent_start(state, agent_name, selection_reason)
 
-    result = evaluate_kyc_aml(state["application_data"])
-    state["kyc_aml_result"] = result
-    state["messages"].append(
-        AIMessage(content=f"KYC/AML demo result: {result['aml_risk_level']}")
+    application_data_json = json.dumps(state["application_data"], sort_keys=True)
+    message, result = _invoke_tool_agent(
+        state,
+        agent_name,
+        (
+            "You are a KYC/AML specialist in a demo home-loan workflow. "
+            "The human message is JSON. Call run_kyc_aml_check exactly once "
+            "with that JSON as application_data_json. Then summarize only the "
+            "returned risk level and status."
+        ),
+        application_data_json,
+        temperature=0.1,
+        selection_reason=selection_reason,
+        tools=[run_kyc_aml_check],
+        deterministic_result=lambda: evaluate_kyc_aml(state["application_data"]),
     )
+    state["kyc_aml_result"] = result
+    state["messages"].append(message)
     state["current_agent"] = "eligibility"
     _record_agent_complete(
         state,
@@ -767,12 +883,25 @@ def eligibility_node(state: HomeLoanState) -> HomeLoanState:
     selection_reason = state["agent_selection_reasons"]["A3_ELIGIBILITY"]
     _record_agent_start(state, agent_name, selection_reason)
 
-    result = calculate_eligibility(state["application_data"])
+    application_data_json = json.dumps(state["application_data"], sort_keys=True)
+    message, result = _invoke_tool_agent(
+        state,
+        agent_name,
+        (
+            "You are a home-loan eligibility specialist. Call "
+            "calculate_home_loan_eligibility exactly once with the JSON from "
+            "the human message as application_data_json. Then summarize only "
+            "the returned PASS/FAIL result, LVR, DTI, and serviceability status."
+        ),
+        application_data_json,
+        temperature=0.1,
+        selection_reason=selection_reason,
+        tools=[calculate_home_loan_eligibility],
+        deterministic_result=lambda: calculate_eligibility(state["application_data"]),
+    )
     state["eligibility_config_version"] = result["config_version"]
     state["eligibility_result"] = result
-    state["messages"].append(
-        AIMessage(content=f"Eligibility demo result: {result['overall_result']}")
-    )
+    state["messages"].append(message)
     state["current_agent"] = "policy"
     values = result["calculated_values"]
     _record_agent_complete(
@@ -834,13 +963,33 @@ def risk_compliance_node(state: HomeLoanState) -> HomeLoanState:
     selection_reason = state["agent_selection_reasons"]["A5_RISK_COMPLIANCE"]
     _record_agent_start(state, agent_name, selection_reason)
 
-    result = evaluate_risk_compliance(
-        state["kyc_aml_result"] or {},
-        state["eligibility_result"] or {},
-        state["policy_result"] or {},
+    review_context = {
+        "kyc_aml_result": state["kyc_aml_result"] or {},
+        "eligibility_result": state["eligibility_result"] or {},
+        "policy_result": state["policy_result"] or {},
+    }
+    review_context_json = json.dumps(review_context, sort_keys=True)
+    message, result = _invoke_tool_agent(
+        state,
+        agent_name,
+        (
+            "You are a risk and compliance specialist in a demo home-loan "
+            "workflow. Call run_risk_compliance_review exactly once with the "
+            "JSON from the human message as review_context_json. Then summarize "
+            "only the returned verdict and flags."
+        ),
+        review_context_json,
+        temperature=0.1,
+        selection_reason=selection_reason,
+        tools=[run_risk_compliance_review],
+        deterministic_result=lambda: evaluate_risk_compliance(
+            state["kyc_aml_result"] or {},
+            state["eligibility_result"] or {},
+            state["policy_result"] or {},
+        ),
     )
     state["risk_compliance_result"] = result
-    state["messages"].append(AIMessage(content=f"Risk/compliance verdict: {result['verdict']}"))
+    state["messages"].append(message)
     state["current_agent"] = "decision_audit"
     _record_agent_complete(state, agent_name)
     return state
@@ -1039,24 +1188,17 @@ def assess_home_loan_internal(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_home_loan_request(*, deprecated_alias: bool = False):
+def _handle_home_loan_request():
     try:
         payload = request.get_json(silent=True) or {}
         logging.info("[SERVER] Processing home loan assessment")
         result = assess_home_loan_internal(payload)
-        if deprecated_alias:
-            result["deprecation"] = {
-                "route": "/travel/plan",
-                "message": "Deprecated alias. Use /home-loan/assess for the Home Loan Broker demo.",
-            }
         logging.info(
             "[SERVER] Home loan assessment completed: outcome=%s",
             result.get("final_outcome"),
         )
         status = 200
         response = jsonify(result)
-        if deprecated_alias:
-            response.headers["X-Deprecated-Route"] = "/home-loan/assess"
         return response, status
     except Exception as exc:
         logging.error("[SERVER] Error processing home loan assessment: %s", exc)
@@ -1069,13 +1211,7 @@ def _handle_home_loan_request(*, deprecated_alias: bool = False):
 @app.route("/home-loan/assess", methods=["POST"])
 def assess_home_loan():
     """Handle Home Loan Broker assessment requests via HTTP POST."""
-    return _handle_home_loan_request(deprecated_alias=False)
-
-
-@app.route("/travel/plan", methods=["POST"])
-def deprecated_travel_plan_alias():
-    """Backward-compatible alias for old workshop scripts."""
-    return _handle_home_loan_request(deprecated_alias=True)
+    return _handle_home_loan_request()
 
 
 @app.route("/health", methods=["GET"])

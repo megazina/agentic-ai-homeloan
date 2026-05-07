@@ -1,175 +1,144 @@
 # Home Loan Broker Agentic AI Demo
 
-This app is the Home Loan Broker version of the Splunk Agentic AI workshop Travel Agent demo. It keeps the same Flask, LangGraph, LangChain, and OpenTelemetry execution pattern, but re-themes the workflow from travel planning to a bounded home-loan assessment.
+This app is a bounded Home Loan Broker workflow built with Flask, LangGraph,
+LangChain agents, deterministic mortgage assessment tools, and
+OpenTelemetry/Splunk instrumentation.
 
-## Travel To Home Loan Mapping
+The app exposes one assessment route:
 
-- Travel coordinator -> `A0_BROKER_ORCHESTRATOR`
-- Flight, hotel, and activity specialists -> intake, KYC/AML, eligibility, policy, and risk/compliance specialists
-- Travel plan synthesizer -> `A6_DECISION_AUDIT`
-- `plan_travel_internal(...)` -> `assess_home_loan_internal(...)`
-- `/travel/plan` -> `/home-loan/assess`
-- `final_itinerary` -> `final_decision`
-
-`/travel/plan` is still available as a deprecated alias for older workshop scripts. It runs the Home Loan Broker workflow and returns a deprecation header.
-
-## Run Locally
-
-```bash
-opentelemetry-instrument python main.py
+```text
+POST /home-loan/assess
 ```
 
-The server listens on port `8080`.
+It returns a demo-safe JSON recommendation. Raw applicant text, full model
+outputs, and applicant identifiers are not included in the response.
 
-```bash
-curl http://localhost:8080/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d @sample_payloads/likely_eligible.json
+## Agent Flow
+
+The workflow is a sequential LangGraph state machine. Each node records a
+Home Loan agent span, and the LLM-backed nodes also create GenAI spans that are
+shown in Splunk Agent Flow.
+
+```text
+[Applicant request]
+      |
+      v
+A0_BROKER_ORCHESTRATOR
+      |
+      v
+A1_CONVERSATION_INTAKE
+      |
+      v
+A2_KYC_AML
+      |
+      v
+A3_ELIGIBILITY
+      |
+      v
+A4_POLICY
+      |
+      v
+A5_RISK_COMPLIANCE
+      |
+      v
+A6_DECISION_AUDIT
+      |
+      v
+[JSON response]
 ```
 
-## Run In Kubernetes
+### A0 Broker Orchestrator
 
-### Build An Updated Docker Image
+Classifies the request as a home-loan assessment and selects the bounded agent
+path. This node uses a LangChain agent, so Splunk should show
+`invoke_agent broker_orchestrator` and a nested model/chat span when Azure
+OpenAI is configured.
 
-Create namespace
+### A1 Conversation Intake
 
-```bash
-kubectl create ns home-loan-agent
+Extracts the bounded application fields from the request and structured JSON
+payload, then asks an LLM agent to summarize the redacted application shape.
+The output feeds all later deterministic checks.
+
+Important fields include:
+
+- `gross_annual_income`
+- `monthly_expenses`
+- `deposit`
+- `property_value`
+- `loan_amount`
+- `employment_type`
+- `dependants`
+- `existing_debts`
+- `residency_status`
+- `aml_scenario`
+- `policy_version`
+- `active_policy_version`
+
+### A2 KYC/AML
+
+Invokes a LangChain agent with the `run_kyc_aml_check` tool. The tool calls
+`evaluate_kyc_aml(...)`, which classifies the demo AML risk as `LOW`,
+`MEDIUM`, or `HIGH`.
+
+With Azure OpenAI configured, the trace should include:
+
+```text
+invoke_agent kyc_aml
+execute_tool run_kyc_aml_check
 ```
 
+### A3 Eligibility
 
-Build an updated Docker image with the quality-issue tag:
+Invokes a LangChain agent with the `calculate_home_loan_eligibility` tool. The
+tool calls `calculate_eligibility(...)`, which calculates LVR, DTI, monthly
+surplus, required-data completeness, and threshold pass/fail status.
 
-```bash
-cd /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue
-docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
-docker push localhost:9999/agentic-ai-app:app-with-quality-issue
+With Azure OpenAI configured, the trace should include:
+
+```text
+invoke_agent eligibility
+execute_tool calculate_home_loan_eligibility
 ```
 
-### Update The Kubernetes Manifest
+### A4 Policy
 
-Open `k8s.yaml` and confirm the container image points at the updated image:
+Evaluates policy version alignment and policy drift, then uses a policy analyst
+agent to summarize the policy status. This `app-with-quality-issue` variant
+wraps the policy LLM with `PoisonedChatWrapper` to inject a simulated
+policy-narrative quality issue into the trace. The deterministic policy result
+still comes from `evaluate_policy(...)`.
 
-```yaml
-          image: localhost:9999/agentic-ai-app:app-with-quality-issue
+### A5 Risk/Compliance
+
+Invokes a LangChain agent with the `run_risk_compliance_review` tool. The tool
+combines KYC/AML, eligibility, and policy results to choose a deterministic
+demo verdict:
+
+- `PROCEED_AS_DEMO_RECOMMENDATION`
+- `NEED_MORE_INFO`
+- `ESCALATE`
+- `DECLINE_DEMO_RECOMMENDATION`
+
+With Azure OpenAI configured, the trace should include:
+
+```text
+invoke_agent risk_compliance
+execute_tool run_risk_compliance_review
 ```
 
-The manifest deploys the Home Loan Broker app into the `home-loan-agent` namespace and sets `OTEL_SERVICE_NAME` to `home-loan-broker`.
+### A6 Decision Audit
 
-### Deploy The Updated Application
+Produces the final demo outcome and audit record. This step is intentionally
+deterministic and creates the response fields used by tests and downstream demo
+scripts.
 
-Apply the manifest:
+Final outcomes are:
 
-```bash
-kubectl apply -f k8s.yaml
-```
-
-
-
-If this is the first deployment into `home-loan-agent`, create the Azure OpenAI secret in that namespace. Kubernetes secrets are namespace-scoped, so a pod in `home-loan-agent` cannot directly read the existing `azure-openai-api` secret from `travel-agent`.
-
-Use the same environment variables from the workshop setup:
-
-```bash
-{ [ -z "$AZURE_OPENAI_ENDPOINT" ] || [ -z "$AZURE_OPENAI_API_KEY" ]; } && \
-  echo "Error: Missing variables" || \
-  kubectl create secret generic azure-openai-api \
-    -n home-loan-agent \
-    --from-literal=azure-openai-api-endpoint="$AZURE_OPENAI_ENDPOINT" \
-    --from-literal=azure-openai-api-key="$AZURE_OPENAI_API_KEY" \
-    --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Alternatively, copy the existing secret from the original `travel-agent` namespace:
-
-```bash
-kubectl create secret generic azure-openai-api \
-  -n home-loan-agent \
-  --from-literal=azure-openai-api-endpoint="$(kubectl get secret azure-openai-api -n travel-agent -o jsonpath='{.data.azure-openai-api-endpoint}' | base64 -d)" \
-  --from-literal=azure-openai-api-key="$(kubectl get secret azure-openai-api -n travel-agent -o jsonpath='{.data.azure-openai-api-key}' | base64 -d)" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Create a configmap:
-
-```bash
-kubectl create configmap instance-config \
-  -n home-loan-agent \
-  --from-literal=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=agentic-ai-$INSTANCE \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-```bash
-kubectl apply -f k8s.yaml
-```
-
-The manifest marks these references as optional so the pod can still start for deterministic/offline testing. For the full LLM and Splunk workshop path, the secret and configmap should be present in `home-loan-agent`.
-
-### Test The Application In Kubernetes
-
-Ensure the new application pod has started successfully:
-
-```bash
-kubectl get pods -n home-loan-agent
-```
-
-If the pod shows `CreateContainerConfigError`, inspect the event message:
-
-```bash
-kubectl describe pod <pod-name> -n home-loan-agent
-```
-
-The most common cause is a missing namespace-scoped resource such as `secret "azure-openai-api"` or `configmap "instance-config"`. Copy those resources into `home-loan-agent`, then restart the deployment:
-
-```bash
-kubectl rollout restart deployment/home-loan-broker-langchain -n home-loan-agent
-kubectl rollout status deployment/home-loan-broker-langchain -n home-loan-agent
-```
-
-```bash
-kubectl logs home-loan-broker-langchain-679b6b7668-jc9xw -n home-loan-agent
-```
-
-Send a test assessment request through the primary Home Loan Broker ingress host:
-
-```bash
-curl http://home-loan-broker.localhost/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d @sample_payloads/likely_eligible.json
-
-curl http://home-loan-broker.localhost/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d sample_payloads/high_dti_serviceability_fail.json
-
-curl http://home-loan-broker.localhost/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d sample_payloads/high_lvr.json
-
-curl http://home-loan-broker.localhost/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d sample_payloads/aml_escalation.json
-
-curl http://home-loan-broker.localhost/home-loan/assess \
-  -H "Content-Type: application/json" \
-  -d sample_payloads/policy_drift.json
-
-```
-
-The old workshop host and route are still available as a deprecated compatibility alias:
-
-```bash
-curl http://travel-planner.localhost/travel/plan \
-  -H "Content-Type: application/json" \
-  -d @sample_payloads/likely_eligible.json
-```
-
-## Sample Payloads
-
-- `sample_payloads/likely_eligible.json`
-- `sample_payloads/high_lvr.json`
-- `sample_payloads/high_dti_serviceability_fail.json`
-- `sample_payloads/aml_escalation.json`
-- `sample_payloads/policy_drift.json`
+- `APPROVE_IN_PRINCIPLE`
+- `REFER`
+- `DECLINE`
+- `NEED_MORE_INFO`
 
 ## Deterministic Demo Rules
 
@@ -187,18 +156,183 @@ Defaults:
 - `policy_version`: `HL-POLICY-2026.05`
 - `active_policy_version`: `HL-POLICY-2026.05`
 
-## Observability And Safety
+## Observability
 
-The app preserves the workshop OpenTelemetry/Splunk instrumentation settings, including GenAI content capture in `k8s.yaml`. LLM calls receive redacted/summarized inputs where practical, and the final JSON excludes raw prompts, full model outputs, and applicant identifiers.
+The app uses Splunk OpenTelemetry auto-instrumentation plus explicit Home Loan
+agent attributes. In Splunk APM, a normal LLM-enabled request should show:
 
-Every A0-A6 LangGraph node creates an explicit OpenTelemetry span with `ai.workflow.name`, `ai.agent.name`, `ai.agent.version`, and Home Loan attributes. The LLM-backed nodes also create LangChain/GenAI spans, so in Splunk you may see both the high-level agent span and nested model/tool spans.
+- `workflow LangGraph` as the top GenAI workflow span.
+- LangGraph `step ...` spans for each node.
+- `invoke_agent` spans for A0-A5.
+- `execute_tool` spans for KYC/AML, eligibility, and risk/compliance.
+- `chat gpt-4.1-mini` model spans inside the LLM-backed agents.
 
-This is not a real lending decision engine. Outcomes are deterministic demo recommendations only: `APPROVE_IN_PRINCIPLE`, `REFER`, `DECLINE`, or `NEED_MORE_INFO`.
+The code keeps deterministic assessment data separate from model narrative:
+agent/tool spans improve the trace shape, but the final recommendation still
+comes from the deterministic Home Loan functions.
 
-This `app-with-quality-issue` variant keeps a simulated policy-narrative quality issue through `PoisonedChatWrapper` so it remains visible in traces. The injected text is not used for deterministic eligibility, policy, risk, or final decision data.
+For local/offline testing, set `HOME_LOAN_DETERMINISTIC_ONLY=true`. In that
+mode the workflow skips Azure OpenAI calls and still returns deterministic JSON,
+but Splunk will not show the full nested `invoke_agent` and `execute_tool`
+pattern for the LLM-backed agents.
+
+## Run Locally
+
+Install dependencies first if they are not already available in your Python
+environment:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Run the app with OpenTelemetry instrumentation:
+
+```bash
+opentelemetry-instrument python main.py
+```
+
+The server listens on port `8080`.
+
+```bash
+curl http://localhost:8080/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/likely_eligible.json
+```
+
+## Run In Kubernetes
+
+### Build The Image
+
+```bash
+cd /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue
+docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
+docker push localhost:9999/agentic-ai-app:app-with-quality-issue
+```
+
+### Deploy The App
+
+Create the namespace if needed:
+
+```bash
+kubectl create ns home-loan-agent
+```
+
+Create the Azure OpenAI secret in the `home-loan-agent` namespace:
+
+```bash
+{ [ -z "$AZURE_OPENAI_ENDPOINT" ] || [ -z "$AZURE_OPENAI_API_KEY" ]; } && \
+  echo "Error: Missing variables" || \
+  kubectl create secret generic azure-openai-api \
+    -n home-loan-agent \
+    --from-literal=azure-openai-api-endpoint="$AZURE_OPENAI_ENDPOINT" \
+    --from-literal=azure-openai-api-key="$AZURE_OPENAI_API_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Create the instance configmap:
+
+```bash
+kubectl create configmap instance-config \
+  -n home-loan-agent \
+  --from-literal=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=agentic-ai-$INSTANCE \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Apply the manifest:
+
+```bash
+kubectl apply -f k8s.yaml
+kubectl rollout restart deployment/home-loan-broker-langchain -n home-loan-agent
+kubectl rollout status deployment/home-loan-broker-langchain -n home-loan-agent
+```
+
+The manifest deploys the Home Loan Broker app into the `home-loan-agent`
+namespace, sets `OTEL_SERVICE_NAME` to `home-loan-broker`, and exposes the app
+at:
+
+```text
+http://home-loan-broker.localhost/home-loan/assess
+```
+
+### Test In Kubernetes
+
+```bash
+kubectl get pods -n home-loan-agent
+```
+
+If the pod shows `CreateContainerConfigError`, inspect the event message:
+
+```bash
+kubectl describe pod <pod-name> -n home-loan-agent
+```
+
+The most common cause is a missing namespace-scoped resource such as
+`secret "azure-openai-api"` or `configmap "instance-config"`.
+
+Send sample requests:
+
+```bash
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/likely_eligible.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/high_dti_serviceability_fail.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/high_lvr.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/aml_escalation.json
+
+curl http://home-loan-broker.localhost/home-loan/assess \
+  -H "Content-Type: application/json" \
+  -d @sample_payloads/policy_drift.json
+```
+
+## Sample Payloads
+
+- `sample_payloads/likely_eligible.json`: straight-through demo approval path.
+- `sample_payloads/high_lvr.json`: high LVR decline path.
+- `sample_payloads/high_dti_serviceability_fail.json`: serviceability referral path.
+- `sample_payloads/aml_escalation.json`: AML referral path.
+- `sample_payloads/policy_drift.json`: policy drift referral path.
+
+## Response Shape
+
+The response includes:
+
+- `session_id`
+- `application_summary`
+- `agent_path`
+- `agent_steps`
+- `agent_selection_reasons`
+- `eligibility_result`
+- `policy_result`
+- `risk_compliance_result`
+- `final_outcome`
+- `final_decision`
+- `audit_record`
+- `workflow_events`
+
+This is not a real lending decision engine. Outcomes are deterministic demo
+recommendations only and are not credit advice or credit approval.
 
 ## Tests
 
 ```bash
 HOME_LOAN_DETERMINISTIC_ONLY=true python -m unittest discover -s tests
+```
+
+## After Updates
+
+```bash
+docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
+docker push localhost:9999/agentic-ai-app:app-with-quality-issue
+
+kubectl apply -f k8s.yaml
+kubectl rollout restart deployment/home-loan-broker-langchain -n home-loan-agent
 ```

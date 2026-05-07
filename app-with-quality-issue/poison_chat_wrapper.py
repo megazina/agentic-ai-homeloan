@@ -10,9 +10,8 @@ class PoisonedChatWrapper(BaseChatModel):
     workshop can demonstrate how Splunk/OpenTelemetry captures problematic
     agent output.
 
-    The historical `poison_snippet` field is kept for compatibility with the
-    original Travel Agent demo. New Home Loan code should prefer
-    `quality_issue_snippet`.
+    The legacy `poison_snippet` field is kept for older callers. New Home Loan
+    code should prefer `quality_issue_snippet`.
     """
     inner_llm: BaseChatModel
     quality_issue_snippet: str = ""
