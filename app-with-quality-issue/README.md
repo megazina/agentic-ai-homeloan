@@ -240,10 +240,66 @@ curl http://localhost:8080/home-loan/assess \
 
 ## Run In Kubernetes
 
+<details>
+<summary>Kubernetes Collector and app deployment</summary>
+
+The Kubernetes manifest sends OTLP to the Splunk OpenTelemetry Collector agent
+on the node IP at port `4317`:
+
+```yaml
+OTEL_EXPORTER_OTLP_ENDPOINT=http://$(SPLUNK_OTEL_AGENT):4317
+```
+
+Install the Collector before deploying the app so traces and metrics can leave
+the cluster.
+
+Set the deployment variables:
+
+```bash
+export SPLUNK_ACCESS_TOKEN="<your-token>"
+export SPLUNK_REALM="<your-realm>" # for example us1, us0, eu0, au0
+export INSTANCE="home-loan-demo"
+```
+
+### Install The Collector
+
+Add and update the Splunk OpenTelemetry Collector Helm repo:
+
+```bash
+helm repo add splunk-otel-collector-chart https://signalfx.github.io/splunk-otel-collector-chart
+helm repo update
+```
+
+Install the Collector using the included values file:
+
+```bash
+helm upgrade --install splunk-otel-collector \
+  splunk-otel-collector-chart/splunk-otel-collector \
+  --namespace splunk-otel \
+  --create-namespace \
+  --set="splunkObservability.realm=$SPLUNK_REALM" \
+  --set="splunkObservability.accessToken=$SPLUNK_ACCESS_TOKEN" \
+  --set="clusterName=$INSTANCE-cluster" \
+  --set="environment=agentic-ai-$INSTANCE" \
+  -f k8s-otel/values.yaml
+```
+
+`k8s-otel/values.yaml` keeps histogram metrics in OTLP form for Splunk AI Agent
+Monitoring.
+
+If this cluster already has the Splunk OpenTelemetry Collector installed and
+listening on node port `4317`, you can skip this install step.
+
+Confirm the Collector is running:
+
+```bash
+kubectl get pods -n splunk-otel
+```
+
 ### Build The Image
 
 ```bash
-cd /agentic-ai-homeloan/app-with-quality-issue
+cd /Users/zratko/Downloads/ZR-agentic-ai-demo/agentic-ai-homeloan/app-with-quality-issue
 docker build --platform linux/amd64 -t localhost:9999/agentic-ai-app:app-with-quality-issue .
 docker push localhost:9999/agentic-ai-app:app-with-quality-issue
 ```
@@ -331,6 +387,8 @@ curl http://home-loan-broker.localhost/home-loan/assess \
   -H "Content-Type: application/json" \
   -d @sample_payloads/policy_drift.json
 ```
+
+</details>
 
 ## Sample Payloads
 
