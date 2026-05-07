@@ -1,0 +1,14 @@
+services:
+  splunk-otel-collector:
+    image: quay.io/signalfx/splunk-otel-collector:latest
+    container_name: home-loan-local-otel-collector
+    command: ["--config=/etc/otel/collector/local-config.yaml"]
+    environment:
+      SPLUNK_ACCESS_TOKEN: "${SPLUNK_ACCESS_TOKEN:?Set SPLUNK_ACCESS_TOKEN before starting the collector}"
+      SPLUNK_REALM: "${SPLUNK_REALM:?Set SPLUNK_REALM before starting the collector, for example us1 or au0}"
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/collector/local-config.yaml:ro

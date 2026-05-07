@@ -178,6 +178,9 @@ pattern for the LLM-backed agents.
 
 ## Run Locally
 
+<details>
+<summary>Local Flask and OpenTelemetry Collector setup</summary>
+
 Install dependencies first if they are not already available in your Python
 environment:
 
@@ -185,11 +188,45 @@ environment:
 python -m pip install -r requirements.txt
 ```
 
-Run the app with OpenTelemetry instrumentation:
+To run only the Flask app, without exporting traces:
 
 ```bash
+python main.py
+```
+
+### Local Collector With Docker
+
+The easiest local tracing setup is to run a Splunk OpenTelemetry Collector in
+Docker and point the app at it. The collector listens for OTLP on
+`localhost:4317` and forwards traces and metrics to Splunk Observability Cloud.
+The included collector config sends traces to Splunk APM with the `sapm`
+exporter and metrics with the `signalfx` exporter.
+
+Set your Splunk Observability access token and realm:
+
+```bash
+export SPLUNK_ACCESS_TOKEN="<your-token>"
+export SPLUNK_REALM="<your-realm>" # for example us1, us0, eu0, au0
+```
+
+Start the local collector:
+
+```bash
+docker compose -f local-otel/docker-compose.yml up
+```
+
+In a second terminal, run the app with OpenTelemetry instrumentation:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+OTEL_SERVICE_NAME=home-loan-broker-local \
 opentelemetry-instrument python main.py
 ```
+
+If you already have another collector running, skip Docker Compose and point
+`OTEL_EXPORTER_OTLP_ENDPOINT` at that collector instead. Without a reachable
+collector, the app still serves requests, but spans will not arrive in Splunk.
 
 The server listens on port `8080`.
 
@@ -198,6 +235,8 @@ curl http://localhost:8080/home-loan/assess \
   -H "Content-Type: application/json" \
   -d @sample_payloads/likely_eligible.json
 ```
+
+</details>
 
 ## Run In Kubernetes
 
