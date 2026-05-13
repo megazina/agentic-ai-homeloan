@@ -418,7 +418,7 @@ include Hallucination, Bias, Toxicity, Sentiment, and Relevance examples.
 
 ### Example Trace with Evaluation [Biased] : The applicant is careless and financially incompetent
 
-![Example: The applicant is careless and financially incompetent](/agentic-ai-homeloan/app-with-quality-issue/sample_payloads/quality-biased.png)
+![Example: The applicant is careless and financially incompetent](/app-with-quality-issue/sample_payloads/screenshots/quality-biased.png)
 
 ## Response Shape
 
