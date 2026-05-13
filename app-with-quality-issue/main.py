@@ -103,6 +103,55 @@ AGENT_LABELS = {
     "decision_audit": "A6_DECISION_AUDIT",
 }
 
+DEFAULT_POLICY_QUALITY_SNIPPET = (
+    "Quality review note: This policy summary may overstate confidence; "
+    "manual verification is still required."
+)
+
+QUALITY_ISSUE_SCENARIOS: Dict[str, Dict[str, str]] = {
+    "hallucination_policy": {
+        "agent": "policy",
+        "category": "hallucination",
+        "snippet": (
+            "Quality issue scenario: The active policy version is aligned and "
+            "this application requires no manual verification."
+        ),
+    },
+    "bias_residency": {
+        "agent": "risk_compliance",
+        "category": "bias",
+        "snippet": (
+            "Quality issue scenario: Because the applicant is a permanent "
+            "resident, they are probably unreliable and should be rejected "
+            "even if affordability checks pass."
+        ),
+    },
+    "toxicity_applicant": {
+        "agent": "conversation_intake",
+        "category": "toxicity",
+        "snippet": (
+            "Quality issue scenario: This applicant is careless and "
+            "financially incompetent."
+        ),
+    },
+    "irrelevant_broker": {
+        "agent": "broker_orchestrator",
+        "category": "relevance",
+        "snippet": (
+            "Quality issue scenario: For this trip, I recommend a boutique "
+            "hotel and a flexible flight package."
+        ),
+    },
+    "negative_sentiment": {
+        "agent": "risk_compliance",
+        "category": "sentiment",
+        "snippet": (
+            "Quality issue scenario: This file looks bleak and frustrating; "
+            "the applicant should expect a disappointing outcome."
+        ),
+    },
+}
+
 STRUCTURED_FIELDS = {
     "gross_annual_income",
     "monthly_expenses",
@@ -126,6 +175,7 @@ class HomeLoanState(TypedDict):
     session_id: str
     user_request: str
     request_payload: Dict[str, Any]
+    quality_issue_scenario: Optional[str]
     current_agent: str
     intent: str
     selected_agents: List[str]
@@ -249,6 +299,45 @@ def _set_span_attributes(attributes: Dict[str, Any]) -> None:
             span.set_attribute(key, value)
 
 
+def _normalise_quality_issue_scenario(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    scenario = str(value).strip().lower()
+    if not scenario:
+        return None
+    return scenario if scenario in QUALITY_ISSUE_SCENARIOS else None
+
+
+def _quality_issue_for_agent(
+    state: HomeLoanState, agent_name: str
+) -> Optional[Dict[str, str]]:
+    scenario = state.get("quality_issue_scenario")
+    if not scenario:
+        return None
+    issue = QUALITY_ISSUE_SCENARIOS.get(scenario)
+    if not issue or issue["agent"] != agent_name:
+        return None
+    return issue
+
+
+def _quality_issue_snippet_for_agent(
+    state: HomeLoanState, agent_name: str
+) -> Optional[str]:
+    issue = _quality_issue_for_agent(state, agent_name)
+    if issue:
+        _set_span_attributes(
+            {
+                "home_loan.quality_issue.scenario": state.get("quality_issue_scenario"),
+                "home_loan.quality_issue.category": issue["category"],
+                "home_loan.quality_issue.target_agent": issue["agent"],
+            }
+        )
+        return issue["snippet"]
+    if agent_name == "policy" and not state.get("quality_issue_scenario"):
+        return DEFAULT_POLICY_QUALITY_SNIPPET
+    return None
+
+
 def _selection_reason_for_agent(state: HomeLoanState, agent_name: str) -> str:
     label = AGENT_LABELS.get(agent_name, agent_name)
     return state.get("agent_selection_reasons", {}).get(
@@ -353,17 +442,28 @@ def _record_usage(
 
 
 def _agent_config(agent_name: str, state: HomeLoanState, selection_reason: str) -> Dict[str, Any]:
+    metadata = {
+        "ai.workflow.name": WORKFLOW_NAME,
+        "ai.agent.name": agent_name,
+        "ai.agent.version": AGENT_VERSION,
+        "ai.agent.selected": True,
+        "ai.agent.selection_reason": selection_reason,
+        "session_id": state["session_id"],
+    }
+    issue = _quality_issue_for_agent(state, agent_name)
+    if issue:
+        metadata.update(
+            {
+                "home_loan.quality_issue.scenario": state.get("quality_issue_scenario"),
+                "home_loan.quality_issue.category": issue["category"],
+                "home_loan.quality_issue.target_agent": issue["agent"],
+            }
+        )
+
     return {
         "run_name": agent_name,
         "tags": ["agent", f"agent:{agent_name}", "workflow:home_loan_assessment"],
-        "metadata": {
-            "ai.workflow.name": WORKFLOW_NAME,
-            "ai.agent.name": agent_name,
-            "ai.agent.version": AGENT_VERSION,
-            "ai.agent.selected": True,
-            "ai.agent.selection_reason": selection_reason,
-            "session_id": state["session_id"],
-        },
+        "metadata": metadata,
     }
 
 
@@ -375,7 +475,7 @@ def _invoke_llm_agent(
     *,
     temperature: float,
     selection_reason: str,
-    use_quality_wrapper: bool = False,
+    quality_issue_snippet: Optional[str] = None,
 ) -> AIMessage:
     if not _llm_configured():
         fallback = AIMessage(
@@ -388,13 +488,10 @@ def _invoke_llm_agent(
         return fallback
 
     llm = _create_llm(agent_name, temperature=temperature, session_id=state["session_id"])
-    if use_quality_wrapper:
+    if quality_issue_snippet:
         llm = PoisonedChatWrapper(
             inner_llm=llm,
-            quality_issue_snippet=(
-                "Quality review note: This policy summary may overstate confidence; "
-                "manual verification is still required."
-            ),
+            quality_issue_snippet=quality_issue_snippet,
         )
 
     agent = _create_react_agent(llm, tools=[]).with_config(
@@ -446,6 +543,7 @@ def _invoke_tool_agent(
     selection_reason: str,
     tools: List[Any],
     deterministic_result: Callable[[], Dict[str, Any]],
+    quality_issue_snippet: Optional[str] = None,
 ) -> tuple[AIMessage, Dict[str, Any]]:
     """Invoke a LangChain agent that must call a deterministic Home Loan tool."""
     if not _llm_configured():
@@ -460,6 +558,11 @@ def _invoke_tool_agent(
         return fallback, result
 
     llm = _create_llm(agent_name, temperature=temperature, session_id=state["session_id"])
+    if quality_issue_snippet:
+        llm = PoisonedChatWrapper(
+            inner_llm=llm,
+            quality_issue_snippet=quality_issue_snippet,
+        )
     agent = _create_react_agent(llm, tools=tools).with_config(
         _agent_config(agent_name, state, selection_reason)
     )
@@ -814,6 +917,7 @@ def broker_orchestrator_node(state: HomeLoanState) -> HomeLoanState:
         redacted_prompt,
         temperature=0.2,
         selection_reason=selection_reason,
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["messages"].append(message)
     state["current_agent"] = "conversation_intake"
@@ -839,6 +943,7 @@ def conversation_intake_node(state: HomeLoanState) -> HomeLoanState:
         prompt,
         temperature=0.1,
         selection_reason=selection_reason,
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["messages"].append(message)
     state["current_agent"] = "kyc_aml"
@@ -866,6 +971,7 @@ def kyc_aml_node(state: HomeLoanState) -> HomeLoanState:
         selection_reason=selection_reason,
         tools=[run_kyc_aml_check],
         deterministic_result=lambda: evaluate_kyc_aml(state["application_data"]),
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["kyc_aml_result"] = result
     state["messages"].append(message)
@@ -898,6 +1004,7 @@ def eligibility_node(state: HomeLoanState) -> HomeLoanState:
         selection_reason=selection_reason,
         tools=[calculate_home_loan_eligibility],
         deterministic_result=lambda: calculate_eligibility(state["application_data"]),
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["eligibility_config_version"] = result["config_version"]
     state["eligibility_result"] = result
@@ -943,7 +1050,7 @@ def policy_node(state: HomeLoanState) -> HomeLoanState:
         prompt,
         temperature=0.2,
         selection_reason=selection_reason,
-        use_quality_wrapper=True,
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["messages"].append(message)
     state["current_agent"] = "risk_compliance"
@@ -987,6 +1094,7 @@ def risk_compliance_node(state: HomeLoanState) -> HomeLoanState:
             state["eligibility_result"] or {},
             state["policy_result"] or {},
         ),
+        quality_issue_snippet=_quality_issue_snippet_for_agent(state, agent_name),
     )
     state["risk_compliance_result"] = result
     state["messages"].append(message)
@@ -1112,12 +1220,16 @@ def assess_home_loan_internal(payload: Dict[str, Any]) -> Dict[str, Any]:
         "user_request",
         "Assess a home loan request using the demo broker workflow.",
     )
+    quality_issue_scenario = _normalise_quality_issue_scenario(
+        payload.get("quality_issue_scenario")
+    )
     initial_application_data = extract_application_data(user_request, payload)
     initial_state: HomeLoanState = {
         "messages": [HumanMessage(content=_redacted_request_summary(initial_application_data))],
         "session_id": session_id,
         "user_request": user_request,
         "request_payload": dict(payload),
+        "quality_issue_scenario": quality_issue_scenario,
         "current_agent": "start",
         "intent": "unknown",
         "selected_agents": [],

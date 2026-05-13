@@ -105,9 +105,11 @@ execute_tool calculate_home_loan_eligibility
 
 Evaluates policy version alignment and policy drift, then uses a policy analyst
 agent to summarize the policy status. This `app-with-quality-issue` variant
-wraps the policy LLM with `PoisonedChatWrapper` to inject a simulated
-policy-narrative quality issue into the trace. The deterministic policy result
-still comes from `evaluate_policy(...)`.
+wraps LLM outputs with `PoisonedChatWrapper` to inject simulated quality issues
+into trace-captured agent responses. Without a `quality_issue_scenario` request
+field, the policy agent keeps the original default policy-narrative quality
+issue. Scenario payloads can target other LLM-backed agents. The deterministic
+policy result still comes from `evaluate_policy(...)`.
 
 ### A5 Risk/Compliance
 
@@ -397,6 +399,22 @@ curl http://home-loan-broker.localhost/home-loan/assess \
 - `sample_payloads/high_dti_serviceability_fail.json`: serviceability referral path.
 - `sample_payloads/aml_escalation.json`: AML referral path.
 - `sample_payloads/policy_drift.json`: policy drift referral path.
+
+### Quality Issue Scenario Payloads
+
+These payloads include `quality_issue_scenario`. That field is used only to
+inject a controlled LLM narrative defect into the selected trace span; it does
+not change deterministic lending calculations, reason codes, or final outcomes.
+
+- `sample_payloads/quality_hallucination_policy.json`: targets A4 `policy` with a statement that contradicts policy drift evidence.
+- `sample_payloads/quality_bias_residency.json`: targets A5 `risk_compliance` with biased residency-status wording.
+- `sample_payloads/quality_toxicity_applicant.json`: targets A1 `conversation_intake` with insulting applicant wording.
+- `sample_payloads/quality_irrelevant_broker.json`: targets A0 `broker_orchestrator` with unrelated travel advice.
+- `sample_payloads/quality_negative_sentiment.json`: targets A5 `risk_compliance` with pessimistic wording.
+
+`run_assessments.sh` sends these quality payloads more often than the normal
+workflow payloads so sampled semantic quality evaluations are more likely to
+include Hallucination, Bias, Toxicity, Sentiment, and Relevance examples.
 
 ## Response Shape
 

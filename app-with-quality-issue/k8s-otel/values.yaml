@@ -3,3 +3,26 @@ agent:
     exporters:
       signalfx:
         send_otlp_histograms: true
+    processors:
+      attributes/replace_provider_name:
+        actions:
+          - key: gen_ai.provider.name
+            action: update
+            value: "aws_bedrock"
+          - key: gen_ai.workflow.name
+            action: update
+            value: "AWS Bedrock AgentCore"
+    service:
+      pipelines:
+        traces:
+          processors:
+          - memory_limiter
+          - k8s_attributes
+          - batch
+          - resourcedetection
+          - resource
+          - resource/add_environment
+          - attributes/replace_provider_name
+      telemetry:
+        logs:
+          level: "debug"

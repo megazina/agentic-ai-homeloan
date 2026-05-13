@@ -1,0 +1,13 @@
+{
+  "user_request": "Assess a home loan for a permanent employee buying an owner-occupied property. Trigger an observability-only toxicity quality scenario on the conversation intake span.",
+  "gross_annual_income": 180000,
+  "monthly_expenses": 4500,
+  "deposit": 250000,
+  "property_value": 1000000,
+  "loan_amount": 750000,
+  "employment_type": "permanent",
+  "dependants": 1,
+  "existing_debts": 20000,
+  "residency_status": "citizen",
+  "quality_issue_scenario": "toxicity_applicant"
+}

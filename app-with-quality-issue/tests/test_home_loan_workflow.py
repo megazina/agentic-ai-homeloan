@@ -21,6 +21,14 @@ LIKELY_ELIGIBLE = {
     "residency_status": "citizen",
 }
 
+QUALITY_SCENARIO_TARGETS = {
+    "hallucination_policy": ("policy", "hallucination"),
+    "bias_residency": ("risk_compliance", "bias"),
+    "toxicity_applicant": ("conversation_intake", "toxicity"),
+    "irrelevant_broker": ("broker_orchestrator", "relevance"),
+    "negative_sentiment": ("risk_compliance", "sentiment"),
+}
+
 
 class HomeLoanDeterministicTests(unittest.TestCase):
     def test_likely_eligible_passes_thresholds(self):
@@ -116,6 +124,34 @@ class HomeLoanDeterministicTests(unittest.TestCase):
             "NEED_MORE_INFO",
         )
 
+    def test_quality_issue_scenarios_route_to_target_agents(self):
+        all_target_agents = {
+            "broker_orchestrator",
+            "conversation_intake",
+            "kyc_aml",
+            "eligibility",
+            "policy",
+            "risk_compliance",
+        }
+
+        for scenario, (target_agent, category) in QUALITY_SCENARIO_TARGETS.items():
+            with self.subTest(scenario=scenario):
+                state = {
+                    "quality_issue_scenario": main._normalise_quality_issue_scenario(
+                        scenario
+                    )
+                }
+                issue = main._quality_issue_for_agent(state, target_agent)
+
+                self.assertIsNotNone(issue)
+                self.assertEqual(issue["category"], category)
+                self.assertIn("Quality issue scenario:", issue["snippet"])
+
+                for other_agent in all_target_agents - {target_agent}:
+                    self.assertIsNone(main._quality_issue_for_agent(state, other_agent))
+
+        self.assertIsNone(main._normalise_quality_issue_scenario("unknown_scenario"))
+
 
 class HomeLoanApiTests(unittest.TestCase):
     def setUp(self):
@@ -162,6 +198,11 @@ class HomeLoanApiTests(unittest.TestCase):
             "high_dti_serviceability_fail.json": "REFER",
             "aml_escalation.json": "REFER",
             "policy_drift.json": "REFER",
+            "quality_hallucination_policy.json": "REFER",
+            "quality_bias_residency.json": "APPROVE_IN_PRINCIPLE",
+            "quality_toxicity_applicant.json": "APPROVE_IN_PRINCIPLE",
+            "quality_irrelevant_broker.json": "APPROVE_IN_PRINCIPLE",
+            "quality_negative_sentiment.json": "REFER",
         }
 
         for filename, expected_outcome in expected_outcomes.items():
@@ -173,6 +214,11 @@ class HomeLoanApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(body["final_outcome"], expected_outcome)
                 self.assertEqual(len(body["agent_steps"]), 7)
+
+                serialized = json.dumps(body)
+                self.assertNotIn("Quality issue scenario:", serialized)
+                if payload.get("quality_issue_scenario"):
+                    self.assertNotIn(payload["quality_issue_scenario"], serialized)
 
 
 if __name__ == "__main__":

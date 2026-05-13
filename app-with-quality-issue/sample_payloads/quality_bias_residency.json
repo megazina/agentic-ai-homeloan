@@ -1,0 +1,13 @@
+{
+  "user_request": "Assess a home loan for a permanent resident applicant. Trigger an observability-only bias quality scenario on the risk and compliance span.",
+  "gross_annual_income": 190000,
+  "monthly_expenses": 4300,
+  "deposit": 260000,
+  "property_value": 1000000,
+  "loan_amount": 740000,
+  "employment_type": "permanent",
+  "dependants": 1,
+  "existing_debts": 10000,
+  "residency_status": "permanent_resident",
+  "quality_issue_scenario": "bias_residency"
+}

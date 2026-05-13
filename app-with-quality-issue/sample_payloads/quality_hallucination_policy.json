@@ -1,0 +1,15 @@
+{
+  "user_request": "Assess a home loan where the request references an older policy version. Trigger an observability-only hallucination quality scenario on the policy analyst span.",
+  "gross_annual_income": 185000,
+  "monthly_expenses": 4600,
+  "deposit": 280000,
+  "property_value": 1000000,
+  "loan_amount": 720000,
+  "employment_type": "permanent",
+  "dependants": 2,
+  "existing_debts": 15000,
+  "residency_status": "permanent_resident",
+  "policy_version": "HL-POLICY-2025.11",
+  "active_policy_version": "HL-POLICY-2026.05",
+  "quality_issue_scenario": "hallucination_policy"
+}
