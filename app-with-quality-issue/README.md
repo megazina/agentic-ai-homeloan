@@ -418,7 +418,9 @@ include Hallucination, Bias, Toxicity, Sentiment, and Relevance examples.
 
 ### Example Trace with Evaluation [Biased] : The applicant is careless and financially incompetent
 
-![Example: The applicant is careless and financially incompetent](/app-with-quality-issue/sample_payloads/screenshots/quality-biased.png)
+![Example: The applicant is careless and financially incompetent](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic.png)
+
+![Example: Eval explanation](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic-eval.png)
 
 ## Response Shape
 
