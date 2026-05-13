@@ -2,7 +2,7 @@
 
 This app is a bounded Home Loan Broker workflow built with Flask, LangGraph,
 LangChain agents, deterministic mortgage assessment tools, and
-OpenTelemetry/Splunk instrumentation.
+OpenTelemetry/Splunk instrumentation with [example screenshots](#examples-including-traces-with-evaluation-in-splunk-observability-cloud)
 
 The app exposes one assessment route:
 
@@ -416,12 +416,6 @@ not change deterministic lending calculations, reason codes, or final outcomes.
 workflow payloads so sampled semantic quality evaluations are more likely to
 include Hallucination, Bias, Toxicity, Sentiment, and Relevance examples.
 
-### Example Trace with Evaluation [Biased] : The applicant is careless and financially incompetent
-
-![Example: The applicant is careless and financially incompetent](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic.png)
-
-![Example: Eval explanation](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic-eval.png)
-
 ## Response Shape
 
 The response includes:
@@ -457,3 +451,19 @@ docker push localhost:9999/agentic-ai-app:app-with-quality-issue
 kubectl apply -f k8s.yaml
 kubectl rollout restart deployment/home-loan-broker-langchain -n home-loan-agent
 ```
+
+## Examples including Traces with Evaluation in Splunk Observability Cloud
+
+![Example: AI apps overview](/app-with-quality-issue/sample_payloads/screenshots/ai-apps-overview.png)
+
+![Example: AI Agents list](/app-with-quality-issue/sample_payloads/screenshots/ai-agents-all.png)
+
+![Example: AI agent view](/app-with-quality-issue/sample_payloads/screenshots/ai-agent-view.png)
+
+![Example: AI traces](/app-with-quality-issue/sample_payloads/screenshots/ai-traces-data.png)
+
+![Example: AI agent flow](/app-with-quality-issue/sample_payloads/screenshots/ai-agent-flow.png)
+
+![Example: The applicant is careless and financially incompetent](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic.png)
+
+![Example: Eval explanation](/app-with-quality-issue/sample_payloads/screenshots/quality-toxic-eval.png)
