@@ -416,6 +416,10 @@ not change deterministic lending calculations, reason codes, or final outcomes.
 workflow payloads so sampled semantic quality evaluations are more likely to
 include Hallucination, Bias, Toxicity, Sentiment, and Relevance examples.
 
+### Example Trace with Evaluation [Biased] : The applicant is careless and financially incompetent
+
+![Example: The applicant is careless and financially incompetent](/agentic-ai-homeloan/app-with-quality-issue/sample_payloads/quality-biased.png)
+
 ## Response Shape
 
 The response includes:
