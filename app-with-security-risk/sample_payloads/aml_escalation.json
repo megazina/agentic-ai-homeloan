@@ -1,0 +1,13 @@
+{
+  "user_request": "Assess a home loan with a simulated AML escalation for workshop observability.",
+  "gross_annual_income": 190000,
+  "monthly_expenses": 4300,
+  "deposit": 260000,
+  "property_value": 1000000,
+  "loan_amount": 740000,
+  "employment_type": "contractor",
+  "dependants": 1,
+  "existing_debts": 10000,
+  "residency_status": "citizen",
+  "aml_scenario": "high"
+}
